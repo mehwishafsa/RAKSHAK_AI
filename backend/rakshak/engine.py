@@ -70,7 +70,8 @@ class Engine:
         self.verify_streak = 0
         self.maintenance_until = 0.0
         self.suppressed: dict[str, dict] = {}
-        self.incident: dict | None = self._load_active_incident()
+        self.incident: dict | None = None
+        self._close_stale_incidents()
         self.last_message: dict | None = None
         self._subscribers: set[asyncio.Queue] = set()
 
@@ -83,7 +84,7 @@ class Engine:
             cal.step(0.2)
         return Baseline.from_frames(cal.step(0.2) for _ in range(CALIBRATION_WINDOWS))
 
-    def _load_active_incident(self) -> dict | None:
+    def _close_stale_incidents(self) -> None:
         # A restart loses the in-memory simulation, so incidents left open by a
         # previous process can't be continued honestly: close them as interrupted.
         for row in self.db.query(
@@ -97,7 +98,6 @@ class Engine:
                 actor="system",
                 summary=f"{row['id']} closed: service restarted before the workflow completed",
             )
-        return None
 
     # ------------------------------------------------------------ incidents
     def _decode_incident(self, row: dict | None) -> dict | None:
@@ -337,6 +337,7 @@ class Engine:
         work_order = self._next_id(f"WO-{datetime.now(timezone.utc):%Y}-", "incidents", "work_order")
         with self.db.transaction() as conn:
             reserved = reserve_parts(conn, inc["action"]["inventory"])
+        shortfalls = [line["sku"] for line in inc["action"]["inventory"]["lines"] if not line["available"]]
         now = utcnow()
         inc = self._set_incident(
             incident_id, status="IN_PROGRESS", decided_by=actor, decided_at=now, decision_note=note, work_order=work_order
@@ -355,10 +356,10 @@ class Engine:
             incident_id=incident_id,
             event_type="WORK_ORDER_DISPATCHED",
             actor="rakshak-action-engine",
-            summary=f"{work_order} dispatched; {len(reserved)} part line(s) reserved; controlled shutdown initiated",
-            payload={"work_order": work_order, "reserved": reserved, "shortfalls": [
-                line for line in inc["action"]["inventory"]["lines"] if not line["available"]
-            ]},
+            summary=f"{work_order} dispatched; {len(reserved)} part line(s) reserved"
+            + (f", {len(shortfalls)} shortfall(s) flagged for procurement" if shortfalls else "")
+            + "; controlled shutdown initiated",
+            payload={"work_order": work_order, "reserved": reserved, "shortfalls": shortfalls},
         )
         self.sim.stop()
         self.state = "MAINTENANCE"
@@ -464,7 +465,8 @@ class Engine:
 
     # -------------------------------------------------------------- streaming
     def subscribe(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=20)
+        # Small buffer: a slow client skips stale frames instead of lagging behind live state.
+        q: asyncio.Queue = asyncio.Queue(maxsize=2)
         self._subscribers.add(q)
         return q
 

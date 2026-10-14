@@ -140,3 +140,20 @@ def test_ledger_persists_across_restart(tmp_path):
 
 def test_legacy_predict_validation(client):
     assert client.post("/predict", json={"rms": 0.9}).status_code == 422
+
+
+def test_restart_with_open_incident_closes_it_as_interrupted(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from backend.app import create_app
+    from backend.rakshak.config import Settings
+
+    settings = Settings(db_path=tmp_path / "r.db", frontend_dist=tmp_path / "none")
+    app = create_app(settings, run_loop=False)
+    with TestClient(app) as c:
+        c.engine = app.state.engine
+        inc = open_incident(c)
+    with TestClient(create_app(settings, run_loop=False)) as c:
+        assert c.get(f"/api/incidents/{inc['id']}").json()["status"] == "INTERRUPTED"
+        assert c.get("/api/ledger").json()[0]["event_type"] == "INCIDENT_INTERRUPTED"
+        assert c.get("/api/state").json()["incident"] is None

@@ -29,7 +29,7 @@ WAVEFORM_PREVIEW_SAMPLES = 160  # ~78 ms, about two shaft revolutions, sent to t
 NOMINAL_RPM = 1480.0  # 4-pole induction motor, 50 Hz supply
 BPFO_ORDER = 3.58  # outer-race defect frequency as a multiple of shaft speed
 RESONANCE_HZ = 610.0  # structural resonance excited by bearing impacts
-FAULT_TAU = 1.6  # seconds (sim time) for fault severity to reach ~63 %
+FAULT_TAU = 1.2  # seconds (sim time) for fault severity to reach ~63 %
 
 AMBIENT_C = 34.0
 HEALTHY_TEMP_C = 58.0
@@ -143,10 +143,10 @@ class MachineSimulator:
         # Thermal: running load heat + fault heat (lube starvation adds friction heat).
         temp_target = AMBIENT_C + (HEALTHY_TEMP_C - AMBIENT_C) * speed_ratio
         temp_target += speed_ratio * (50.0 * heat + 14.0 * lube + 6.0 * bearing)
-        self.temperature = self._lag(self.temperature, temp_target, dt, 1.0)
+        self.temperature = self._lag(self.temperature, temp_target, dt, 0.8)
 
         pressure_target = HEALTHY_PRESSURE_BAR * speed_ratio * (1.0 - 0.62 * lube)
-        self.pressure = self._lag(self.pressure, pressure_target, dt, 1.0)
+        self.pressure = self._lag(self.pressure, pressure_target, dt, 0.6)
 
         oil_target = HEALTHY_OIL_QUALITY - 48.0 * lube - 18.0 * heat
         if oil_target < self.oil_quality:
