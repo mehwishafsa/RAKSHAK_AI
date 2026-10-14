@@ -256,3 +256,20 @@ def test_release_without_estop_is_refused(client):
     assert msg["machine"]["state"] == "RUNNING" and msg["detection"]["risk"] != "OFFLINE"
     events = [e["event_type"] for e in client.get("/api/ledger").json()[:2]]
     assert events[0] == "EMERGENCY_STOP_RELEASED"
+
+
+def test_websocket_accepts_client_heartbeat_and_cleans_up(client):
+    eng = client.engine
+    with client.websocket_connect("/ws/telemetry") as ws:
+        first = ws.receive_json()
+        ws.send_text("ping")  # heartbeat must not break the stream
+        eng._broadcast(eng.step())
+        assert ws.receive_json()["seq"] > first["seq"]
+        assert len(eng._subscribers) == 1
+    for _ in range(50):  # server notices the disconnect and unsubscribes
+        if not eng._subscribers:
+            break
+        import time
+
+        time.sleep(0.05)
+    assert not eng._subscribers

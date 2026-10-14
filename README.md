@@ -136,6 +136,23 @@ UI shows both tags, so the audit trail never passes simulation or sample data of
 
 ## 4. Run it
 
+**Requirements:** Python **3.10 – 3.14** and Node.js **18+** (npm). Check with `python3 --version` and `node --version`.
+macOS's built-in `python3` is 3.9 and is *not* supported; install 3.12 from python.org or `brew install python@3.12`.
+
+### One command, dev mode (hot reload)
+```bash
+make dev                    # macOS / Linux   (same as ./scripts/dev.sh)
+py scripts\dev.py           # Windows (PowerShell / cmd), no make or bash needed
+```
+Then open **http://localhost:5173**. The launcher:
+- picks a supported Python and checks Node
+- creates or repairs `.venv`
+- installs Python and npm dependencies only when they change
+- starts FastAPI (with reload) and Vite, waiting for the API's `/health` before printing the URL
+- moves to the next free port if 8000 or 5173 is taken
+
+Ctrl+C stops both servers. Vite proxies `/api` and `/ws` to the API, so the browser only ever talks to one origin.
+
 ### One command, single container (production mode)
 ```bash
 docker compose up --build        # → http://localhost:8000  (UI, API, WebSocket on one port)
@@ -144,14 +161,31 @@ or `docker build -t rakshak-ai . && docker run -p 8000:8000 -v rakshak-data:/dat
 The ledger lives in the `/data` volume and survives container restarts. If Docker Hub rate-limits you, point the base
 images at a mirror: `--build-arg NODE_IMAGE=mirror.gcr.io/library/node:22-alpine --build-arg PYTHON_IMAGE=mirror.gcr.io/library/python:3.12-slim`.
 
-**Render:** connect the repo; `render.yaml` defines a Docker web service with a 1 GB disk at `/data`. Without a disk,
-Render's filesystem is ephemeral: the ledger survives refreshes and restarts but not redeploys.
+### Deploy to Render
 
-### One command, dev mode (hot reload)
-```bash
-make dev            # or ./scripts/dev.sh  → http://localhost:5173 (Vite proxies /api and /ws to :8000)
-```
-Requires Python 3.10+ and Node 20+. The script creates `.venv`, installs dependencies and starts both servers.
+The repo is ready for a single Render **web service** running the Dockerfile.
+- **Build:** Node builds the React app, then a slim Python image runs FastAPI, which serves the SPA, the REST API and the `/ws/telemetry` WebSocket on **one port**.
+- **Start:** the image binds `0.0.0.0:$PORT`, using the `PORT` Render injects. The frontend uses relative URLs (same origin, `wss://` on HTTPS), so nothing needs configuring.
+- **Blueprint:** `render.yaml` defines the service (free plan, Docker runtime, health check `/health`).
+
+**Steps (Blueprint, recommended)**
+1. Merge this branch into `main`, or note the branch name for step 4.
+2. Sign in at [dashboard.render.com](https://dashboard.render.com) and connect your GitHub account, granting access to the `RAKSHAK_AI` repository.
+3. Click **New → Blueprint**, select the `RAKSHAK_AI` repository, and choose the branch that contains `render.yaml`.
+4. Render reads `render.yaml` and shows one web service, **rakshak-ai** (free, Docker). Click **Apply** / **Deploy Blueprint**.
+5. Wait for the build (about 3–5 min the first time). When the status is **Live**, open the `https://rakshak-ai-xxxx.onrender.com` URL shown on the service page.
+
+**Alternative (no Blueprint):** **New → Web Service** → pick the repo and branch → Language/Runtime **Docker** → Instance Type
+**Free** → under *Advanced* set **Health Check Path** `/health` → **Deploy Web Service**.
+Leave the build and start commands empty; the Dockerfile defines both.
+
+**Environment variables:** none are required. `RAKSHAK_DB_PATH=/data/rakshak.db` is set by the blueprint and also defaults to that path in the image.
+Do **not** set `PORT` yourself, because Render provides it.
+
+**Free-plan behaviour (fine for a demo, know it before judging)**
+- **Data resets:** there's no persistent disk on the free plan. The SQLite database (trust ledger, incidents, stock) resets to the seed data on every redeploy, restart or spin-down. It survives page refreshes while the service is up.
+- **Spin-down:** the service sleeps after 15 min without inbound traffic, and the next visit takes about a minute to wake it. An open dashboard sends a WebSocket heartbeat every 60 s, so it stays awake while the page is open. Open the URL a couple of minutes before presenting.
+- **Keeping data:** to keep the ledger across deploys, change the service to a paid instance (Starter) and attach a 1 GB disk mounted at `/data`. The `render.yaml` has this commented in.
 
 ### Tests
 ```bash
@@ -159,14 +193,14 @@ make test           # pytest (backend) + vitest & tsc (frontend)
 ```
 
 ### Configuration
-Copy `.env.example` → `.env`. Every setting is optional: DB path, tick rate, simulator seed, CORS origins, port.
+Copy `.env.example` → `.env`. Every setting is optional: DB path, tick rate, simulator seed, CORS origins, ports.
 
 ### Before a live demo
 ```bash
 make reseed         # stop the server first; fresh DB: full parts stock, clean ledger (3 labelled sample entries)
 ```
 Each approved repair consumes stock, so repeated rehearsals will eventually show real **shortfalls**. That is correct
-behaviour, but reseed before the judged run.
+behaviour, but reseed before the judged run. On Render, a redeploy or a restart of the service gives the same fresh state.
 
 ## 5. Three-minute demo script
 
@@ -214,7 +248,7 @@ twin panel shows a notice and the rest of the dashboard keeps working.
 | Human approval gate (approve / reject-with-reason, re-alert on escalation) | Role-based access & e-signatures on approvals |
 | Append-only, hash-chained trust ledger in SQLite with verification endpoint | Feedback loop (confirmed fault / false alarm) feeding rule and model tuning |
 | Outcome verification after repair | Remaining-useful-life (RUL) estimation |
-| Single-container deploy (Docker / Render), seed script, 37 backend + 19 frontend tests | |
+| Single-container deploy (Docker / Render), seed script, 44 backend + 19 frontend tests | |
 
 The earlier synthetic-data **IsolationForest baseline** (`models/`, `notebooks/`) is kept and still served at
 `POST /predict` (install `requirements-ml.txt`). It is *not* part of the twin loop, and no accuracy is claimed for it.

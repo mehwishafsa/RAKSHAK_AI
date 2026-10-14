@@ -1,16 +1,23 @@
-# Render blueprint: one Docker web service serving API + WebSocket + SPA on one port.
-# Note: without a persistent disk, Render's filesystem is ephemeral, so the SQLite
-# ledger survives page refreshes and process restarts but resets on redeploy.
+# Render Blueprint — one Docker web service: FastAPI serves the REST API, the
+# /ws/telemetry WebSocket and the built React app on the single port Render assigns
+# (Render injects PORT; the Dockerfile's CMD binds 0.0.0.0:$PORT).
+#
+# Free plan: no persistent disk is possible, so the SQLite trust ledger lives on the
+# container's ephemeral filesystem. It survives page refreshes, but resets on every
+# redeploy, restart, or idle spin-down (after 15 min without inbound traffic).
+# To keep it, switch plan to "starter" and uncomment the disk block below.
 services:
   - type: web
     name: rakshak-ai
     runtime: docker
-    plan: starter
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: RAKSHAK_DB_PATH
         value: /data/rakshak.db
-    disk:
-      name: rakshak-data
-      mountPath: /data
-      sizeGB: 1
+    # disk:                     # paid plans only
+    #   name: rakshak-data
+    #   mountPath: /data
+    #   sizeGB: 1

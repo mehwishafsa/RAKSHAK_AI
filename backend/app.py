@@ -153,14 +153,29 @@ def create_app(settings: Settings | None = None, run_loop: bool = True) -> FastA
         await ws.accept()
         eng = engine()
         q = eng.subscribe()
+
+        async def drain_client() -> None:
+            # Clients send a small heartbeat; reading it also notices disconnects promptly.
+            # (On hosts like Render's free tier, only *inbound* traffic counts as activity.)
+            while True:
+                await ws.receive_text()
+
+        reader = asyncio.create_task(drain_client())
         try:
             if eng.last_message:
                 await ws.send_json(eng.last_message)
-            while True:
-                await ws.send_json(await q.get())
+            while not reader.done():
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                await ws.send_json(msg)
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
+            reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+                await reader
             eng.unsubscribe(q)
 
     app.include_router(legacy_router)
