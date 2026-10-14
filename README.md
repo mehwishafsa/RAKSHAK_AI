@@ -59,7 +59,7 @@ what Rakshak AI targets. (Problem framing, competition and roadmap: [`docs/`](do
 - **Healthy:** cool palette, steady rotation, ore moving on the belt.
 - **Warning:** amber emissive glow on the affected component and a slight shake.
 - **Critical:** red pulsing glow, a red alert light, a floor halo and stronger shake on the faulted part (e.g. **Bearing #3**).
-- **E-Stop** coasts the drive to a standstill. During approved maintenance the component turns blue and is labelled *LOTO · REPAIR*.
+- **E-Stop** coasts the drive to a standstill and stays latched (through approval and repair) until an explicit, audited **Release E-Stop**. During approved maintenance the component turns blue and is labelled *LOTO · REPAIR*.
 - Live data drives the visuals directly: shake amplitude comes from the measured vibration RMS, the gauge needle shows lube-oil pressure, and the oil sight-glass colour follows oil quality.
 - The twin only highlights a component the **detector** localised. It never sees which fault was injected.
 - Orbit controls, grid floor and contact shadows; respects `prefers-reduced-motion` (no shake or pulse).
@@ -124,7 +124,7 @@ docs/                    architecture, workflow, competitive analysis, FAQ, road
 | WS | `/ws/telemetry` | 5 Hz frames: readings, raw waveform, detection, current incident, ledger head |
 | GET | `/api/state` | machine, baseline stats, speeds, latest frame |
 | POST | `/api/sim/scenario` `{scenario}` | inject a simulated `bearing` / `overheating` / `lubrication` fault |
-| POST | `/api/sim/reset` · `/api/sim/speed` `{speed}` · `/api/sim/estop` `{actor}` | demo controls |
+| POST | `/api/sim/reset` · `/api/sim/speed` `{speed}` · `/api/sim/estop` / `/api/sim/release` `{actor}` | demo controls (E-stop latches until released) |
 | GET | `/api/incidents` · `/api/incidents/{id}` | incidents with frozen explanation + action |
 | POST | `/api/incidents/{id}/approve` `{approver, note}` | human approval → work order, parts, shutdown |
 | POST | `/api/incidents/{id}/reject` `{approver, reason}` | human rejection (reason required) |

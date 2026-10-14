@@ -157,3 +157,102 @@ def test_restart_with_open_incident_closes_it_as_interrupted(tmp_path):
         assert c.get(f"/api/incidents/{inc['id']}").json()["status"] == "INTERRUPTED"
         assert c.get("/api/ledger").json()[0]["event_type"] == "INCIDENT_INTERRUPTED"
         assert c.get("/api/state").json()["incident"] is None
+
+
+# ---- review fixes: approval gate integrity & E-stop latch ----------------------
+
+
+def test_blank_approver_is_rejected(client):
+    inc = open_incident(client)
+    for body in ({"approver": "   ", "note": ""}, {"approver": "\t"}):
+        assert client.post(f"/api/incidents/{inc['id']}/approve", json=body).status_code == 422
+    r = client.post(f"/api/incidents/{inc['id']}/reject", json={"approver": "  ", "reason": "x"})
+    assert r.status_code == 422
+    r = client.post(f"/api/incidents/{inc['id']}/reject", json={"approver": "A", "reason": "   "})
+    assert r.status_code == 422
+    assert client.get(f"/api/incidents/{inc['id']}").json()["status"] == "AWAITING_APPROVAL"
+    # Names are stored trimmed.
+    r = client.post(f"/api/incidents/{inc['id']}/approve", json={"approver": "  R. Sharma  "})
+    assert r.json()["decided_by"] == "R. Sharma"
+
+
+def test_engine_refuses_blank_actor_directly(client):
+    import pytest
+
+    from backend.rakshak.engine import ControlError
+
+    inc = open_incident(client)
+    with pytest.raises(ControlError):
+        client.engine.approve(inc["id"], " ")
+
+
+def test_concurrent_approvals_dispatch_exactly_once(client):
+    import threading
+
+    from backend.rakshak.engine import ControlError
+
+    eng = client.engine
+    inc = open_incident(client)
+    barrier = threading.Barrier(8)
+    results = []
+
+    def approve():
+        barrier.wait()
+        try:
+            eng.approve(inc["id"], "engineer")
+            results.append("ok")
+        except ControlError:
+            results.append("conflict")
+
+    threads = [threading.Thread(target=approve) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results.count("ok") == 1 and results.count("conflict") == 7
+    stock = {p["sku"]: p["qty_on_hand"] for p in client.get("/api/inventory").json()}
+    assert stock["BRG-6312-2RS"] == 3  # reserved once, not eight times
+    events = [e["event_type"] for e in client.get("/api/ledger", params={"incident_id": inc["id"]}).json()]
+    assert events.count("HUMAN_APPROVED") == 1 and events.count("WORK_ORDER_DISPATCHED") == 1
+
+
+def test_approval_does_not_release_a_latched_estop(client):
+    eng = client.engine
+    inc = open_incident(client)
+    client.post("/api/sim/estop", json={"actor": "operator"})
+    assert client.post(f"/api/incidents/{inc['id']}/approve", json={"approver": "R. Sharma"}).status_code == 200
+
+    # Repair completes, but the drive must stay stopped while the E-stop is latched.
+    msg = run_until(eng, lambda m: m["incident"]["status"] == "VERIFYING", max_ticks=300)
+    assert msg["machine"]["state"] == "E_STOP" and msg["machine"]["estop_latched"] is True
+    for _ in range(30):
+        msg = eng.step()
+    assert msg["machine"]["rpm"] < 50
+    assert msg["incident"]["status"] == "VERIFYING"
+    completed = client.get("/api/ledger", params={"incident_id": inc["id"]}).json()[0]
+    assert completed["event_type"] == "MAINTENANCE_COMPLETED" and "release required" in completed["summary"]
+
+    # Only an explicit release restarts the drive; verification then closes the incident.
+    assert client.post("/api/sim/release", json={"actor": "operator"}).status_code == 200
+    run_until(eng, lambda m: m["incident"]["status"] == "RESOLVED", max_ticks=300)
+    assert client.get("/api/ledger/verify").json()["valid"] is True
+
+
+def test_estop_during_maintenance_keeps_repair_but_blocks_restart(client):
+    eng = client.engine
+    inc = open_incident(client)
+    client.post(f"/api/incidents/{inc['id']}/approve", json={"approver": "R. Sharma"})
+    client.post("/api/sim/estop", json={"actor": "operator"})
+    assert eng.state == "MAINTENANCE"  # repair continues
+    msg = run_until(eng, lambda m: m["incident"]["status"] == "VERIFYING", max_ticks=300)
+    assert msg["machine"]["state"] == "E_STOP"
+
+
+def test_release_without_estop_is_refused(client):
+    assert client.post("/api/sim/release", json={"actor": "operator"}).status_code == 409
+    client.post("/api/sim/estop", json={"actor": "operator"})
+    assert client.post("/api/sim/release", json={"actor": "operator"}).status_code == 200
+    msg = run_until(client.engine, lambda m: m["machine"]["rpm"] > 1400)
+    assert msg["machine"]["state"] == "RUNNING" and msg["detection"]["risk"] != "OFFLINE"
+    events = [e["event_type"] for e in client.get("/api/ledger").json()[:2]]
+    assert events[0] == "EMERGENCY_STOP_RELEASED"

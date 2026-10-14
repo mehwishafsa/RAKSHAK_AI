@@ -35,6 +35,7 @@ export const api = {
   reset: () => post("/api/sim/reset"),
   setSpeed: (speed: number) => post("/api/sim/speed", { speed }),
   emergencyStop: (actor: string) => post("/api/sim/estop", { actor }),
+  releaseEstop: (actor: string) => post("/api/sim/release", { actor }),
   approve: (id: string, approver: string, note: string) =>
     post<Incident>(`/api/incidents/${encodeURIComponent(id)}/approve`, { approver, note }),
   reject: (id: string, approver: string, reason: string) =>

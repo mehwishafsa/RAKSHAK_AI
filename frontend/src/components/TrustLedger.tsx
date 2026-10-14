@@ -9,6 +9,7 @@ const EVENT_TONE: Record<string, Tone> = {
   FAULT_DETECTED: "crit",
   RISK_ESCALATED: "crit",
   EMERGENCY_STOP: "crit",
+  EMERGENCY_STOP_RELEASED: "warn",
   EXPLANATION_GENERATED: "info",
   FAULT_RECLASSIFIED: "info",
   ACTION_PROPOSED: "accent",

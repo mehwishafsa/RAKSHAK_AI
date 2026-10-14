@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Droplets, Flame, OctagonX, RotateCcw, Waves } from "lucide-react";
+import { Droplets, Flame, OctagonX, Power, RotateCcw, Waves } from "lucide-react";
 import { api } from "../lib/api";
 import type { ScenarioId, TelemetryFrame } from "../types";
 
@@ -61,13 +61,23 @@ export function DemoControls({ frame, onError }: { frame: TelemetryFrame | null;
           </button>
         ))}
       </div>
-      <button
-        className="btn ml-auto border-crit bg-crit py-1.5 text-xs font-bold uppercase tracking-wide text-white hover:bg-crit/90"
-        disabled={busy !== null || state === "E_STOP"}
-        onClick={() => run("estop", () => api.emergencyStop("operator"))}
-      >
-        <OctagonX size={15} aria-hidden /> E-Stop
-      </button>
+      {frame?.machine.estop_latched ? (
+        <button
+          className="btn ml-auto border-warn bg-warn/90 py-1.5 text-xs font-bold uppercase tracking-wide text-black hover:bg-warn"
+          disabled={busy !== null}
+          onClick={() => run("release", () => api.releaseEstop("operator"))}
+        >
+          <Power size={15} aria-hidden /> Release E-Stop
+        </button>
+      ) : (
+        <button
+          className="btn ml-auto border-crit bg-crit py-1.5 text-xs font-bold uppercase tracking-wide text-white hover:bg-crit/90"
+          disabled={busy !== null}
+          onClick={() => run("estop", () => api.emergencyStop("operator"))}
+        >
+          <OctagonX size={15} aria-hidden /> E-Stop
+        </button>
+      )}
     </div>
   );
 }

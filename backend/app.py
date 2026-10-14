@@ -6,7 +6,8 @@ Rakshak AI — FastAPI service.
   POST /api/sim/scenario                inject a simulated fault  {scenario}
   POST /api/sim/reset                   reset simulation to healthy
   POST /api/sim/speed                   set simulation speed      {speed}
-  POST /api/sim/estop                   emergency stop            {actor}
+  POST /api/sim/estop                   emergency stop (latches)  {actor}
+  POST /api/sim/release                 release a latched e-stop  {actor}
   GET  /api/incidents                   recent incidents
   GET  /api/incidents/{id}              one incident
   POST /api/incidents/{id}/approve      human approval            {approver, note}
@@ -114,6 +115,11 @@ def create_app(settings: Settings | None = None, run_loop: bool = True) -> FastA
         engine().emergency_stop(req.actor)
         return schemas.OkResponse(detail="emergency stop")
 
+    @app.post("/api/sim/release", response_model=schemas.OkResponse)
+    def release(req: schemas.ActorRequest):
+        guard(engine().release_estop, req.actor)
+        return schemas.OkResponse(detail="emergency stop released")
+
     @app.get("/api/incidents", response_model=list[schemas.Incident])
     def incidents(limit: int = 20):
         return engine().list_incidents(min(max(limit, 1), 200))
@@ -124,11 +130,11 @@ def create_app(settings: Settings | None = None, run_loop: bool = True) -> FastA
 
     @app.post("/api/incidents/{incident_id}/approve", response_model=schemas.Incident)
     def approve(incident_id: str, req: schemas.ApproveRequest):
-        return guard(engine().approve, incident_id, req.approver.strip(), req.note.strip())
+        return guard(engine().approve, incident_id, req.approver, req.note)
 
     @app.post("/api/incidents/{incident_id}/reject", response_model=schemas.Incident)
     def reject(incident_id: str, req: schemas.RejectRequest):
-        return guard(engine().reject, incident_id, req.approver.strip(), req.reason.strip())
+        return guard(engine().reject, incident_id, req.approver, req.reason)
 
     @app.get("/api/ledger", response_model=list[schemas.LedgerEntry])
     def ledger(limit: int = 200, incident_id: str | None = None):

@@ -20,7 +20,9 @@ before a human approval.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
+import threading
 from datetime import datetime, timezone
 
 from .actions import build_action, reserve_parts
@@ -54,6 +56,17 @@ class NotFound(Exception):
     pass
 
 
+def _locked(method):
+    """Serialise state transitions: REST handlers run in a threadpool, the tick in the event loop."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class Engine:
     def __init__(self, db: Database, seed: int = 7, tick_seconds: float = 0.2) -> None:
         self.db = db
@@ -65,6 +78,10 @@ class Engine:
         self.detector = Detector(self.baseline)
         self.speed = 1.0
         self.state = "RUNNING"  # RUNNING | E_STOP | MAINTENANCE
+        # A pressed E-stop stays latched until an explicit release (or a simulation reset);
+        # approving or completing a repair never restarts the drive on its own.
+        self.estop_latched = False
+        self._lock = threading.RLock()
         self.seq = 0
         self.alarm_streak = 0
         self.verify_streak = 0
@@ -228,6 +245,7 @@ class Engine:
         return True
 
     # ------------------------------------------------------------------- tick
+    @_locked
     def step(self) -> dict:
         dt = self.tick_seconds * self.speed
         frame = self.sim.step(dt)
@@ -235,9 +253,14 @@ class Engine:
 
         if self.state == "MAINTENANCE" and self.sim.sim_time >= self.maintenance_until:
             self.sim.clear_fault()
-            self.sim.start()
-            self.state = "RUNNING"
             self.detector.reset()
+            if self.estop_latched:
+                self.state = "E_STOP"
+                after = "E-stop still latched — release required before restart"
+            else:
+                self.sim.start()
+                self.state = "RUNNING"
+                after = "machine restarted, verifying signals"
             if self.incident and self.incident["status"] == "IN_PROGRESS":
                 self._set_incident(self.incident["id"], status="VERIFYING")
                 self.verify_streak = 0
@@ -246,7 +269,7 @@ class Engine:
                     incident_id=self.incident["id"],
                     event_type="MAINTENANCE_COMPLETED",
                     actor="maintenance-crew (simulated)",
-                    summary=f"{self.incident['work_order']} completed; machine restarted, verifying signals",
+                    summary=f"{self.incident['work_order']} completed; {after}",
                 )
 
         active = self.state == "RUNNING" and self.sim.running
@@ -274,6 +297,7 @@ class Engine:
                 "id": self.machine_id,
                 "name": MACHINE["name"],
                 "state": self.state,
+                "estop_latched": self.estop_latched,
                 "rpm": frame.rpm,
                 "injected_scenario": self.sim.scenario,
             },
@@ -332,7 +356,10 @@ class Engine:
             raise ControlError(f"{incident_id} is {inc['status']}, expected {status}")
         return inc
 
+    @_locked
     def approve(self, incident_id: str, actor: str, note: str = "") -> dict:
+        if not actor.strip():
+            raise ControlError("a named approver is required")
         inc = self._require_incident(incident_id, "AWAITING_APPROVAL")
         work_order = self._next_id(f"WO-{datetime.now(timezone.utc):%Y}-", "incidents", "work_order")
         with self.db.transaction() as conn:
@@ -362,12 +389,15 @@ class Engine:
             payload={"work_order": work_order, "reserved": reserved, "shortfalls": shortfalls},
         )
         self.sim.stop()
-        self.state = "MAINTENANCE"
+        self.state = "MAINTENANCE"  # an E-stop, if pressed, stays latched (see step())
         self.maintenance_until = self.sim.sim_time + MAINTENANCE_SECONDS
         self.alarm_streak = 0
         return inc
 
+    @_locked
     def reject(self, incident_id: str, actor: str, reason: str) -> dict:
+        if not actor.strip():
+            raise ControlError("a named approver is required")
         if not reason.strip():
             raise ControlError("a reason is required to reject an action")
         inc = self._require_incident(incident_id, "AWAITING_APPROVAL")
@@ -385,6 +415,7 @@ class Engine:
         )
         return inc
 
+    @_locked
     def inject(self, scenario: str, actor: str = "demo-presenter") -> None:
         if scenario not in SCENARIOS:
             raise ControlError(f"unknown scenario {scenario!r}")
@@ -402,6 +433,7 @@ class Engine:
             payload={"scenario": scenario},
         )
 
+    @_locked
     def reset(self, actor: str = "demo-presenter") -> None:
         if self.incident and self.incident["status"] in ACTIVE_STATUSES:
             self._set_incident(self.incident["id"], status="CANCELLED")
@@ -416,6 +448,7 @@ class Engine:
         self.sim.reset()
         self.detector.reset()
         self.state = "RUNNING"
+        self.estop_latched = False
         self.alarm_streak = 0
         self.verify_streak = 0
         self.suppressed.clear()
@@ -428,11 +461,14 @@ class Engine:
             summary="Demo control: simulation reset to healthy operation",
         )
 
+    @_locked
     def emergency_stop(self, actor: str = "operator") -> None:
-        if self.state == "E_STOP":
+        if self.estop_latched:
             return
         self.sim.stop()
-        self.state = "E_STOP"
+        self.estop_latched = True
+        if self.state != "MAINTENANCE":  # a repair in progress still completes, but won't restart the drive
+            self.state = "E_STOP"
         self.alarm_streak = 0
         self.ledger.append(
             machine_id=self.machine_id,
@@ -442,6 +478,26 @@ class Engine:
             summary="Emergency stop pressed — drive coasting to standstill; detection paused",
         )
 
+    @_locked
+    def release_estop(self, actor: str = "operator") -> None:
+        if not self.estop_latched:
+            raise ControlError("emergency stop is not latched")
+        self.estop_latched = False
+        if self.state == "E_STOP":
+            self.sim.start()
+            self.detector.reset()
+            self.state = "RUNNING"
+            self.alarm_streak = 0
+        self.ledger.append(
+            machine_id=self.machine_id,
+            incident_id=self.incident["id"] if self.incident and self.incident["status"] in ACTIVE_STATUSES else None,
+            event_type="EMERGENCY_STOP_RELEASED",
+            actor=actor,
+            summary="Emergency stop released"
+            + (" — drive restarting" if self.state == "RUNNING" else " — drive restarts when maintenance completes"),
+        )
+
+    @_locked
     def set_speed(self, speed: float) -> None:
         if speed not in SPEEDS:
             raise ControlError(f"speed must be one of {SPEEDS}")
@@ -449,7 +505,7 @@ class Engine:
 
     def state_summary(self) -> dict:
         return {
-            "machine": {**MACHINE, "state": self.state},
+            "machine": {**MACHINE, "state": self.state, "estop_latched": self.estop_latched},
             "speed": self.speed,
             "speeds": list(SPEEDS),
             "scenarios": [{"id": k, "label": v} for k, v in SCENARIO_LABELS.items()],

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 Scenario = Literal["bearing", "overheating", "lubrication"]
+
+# Identities and reasons are stripped before length checks, so "   " is rejected (422)
+# rather than recorded as an empty, unattributable actor.
+Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+Note = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
 
 
 class ScenarioRequest(BaseModel):
@@ -18,17 +24,17 @@ class SpeedRequest(BaseModel):
 
 
 class ActorRequest(BaseModel):
-    actor: str = Field("operator", min_length=1, max_length=80)
+    actor: Name = "operator"
 
 
 class ApproveRequest(BaseModel):
-    approver: str = Field(..., min_length=1, max_length=80, description="Name / ID of the approving engineer")
-    note: str = Field("", max_length=500)
+    approver: Name = Field(..., description="Name / ID of the approving engineer")
+    note: Note = ""
 
 
 class RejectRequest(BaseModel):
-    approver: str = Field(..., min_length=1, max_length=80)
-    reason: str = Field(..., min_length=1, max_length=500, description="Why the proposed action is rejected")
+    approver: Name
+    reason: Reason = Field(..., description="Why the proposed action is rejected")
 
 
 class LedgerEntry(BaseModel):

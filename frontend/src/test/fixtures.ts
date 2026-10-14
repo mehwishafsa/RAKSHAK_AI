@@ -64,7 +64,7 @@ export function frameWith(partial: Partial<TelemetryFrame> = {}): TelemetryFrame
     sim_time: 10,
     speed: 1,
     simulated: true,
-    machine: { id: "CD-07", name: "Conveyor Drive CD-07", state: "RUNNING", rpm: 1480, injected_scenario: null },
+    machine: { id: "CD-07", name: "Conveyor Drive CD-07", state: "RUNNING", estop_latched: false, rpm: 1480, injected_scenario: null },
     readings: { vibration_rms: 1.8, vibration_peak: 3, kurtosis: 1.7, crest_factor: 1.9, temperature: 58, pressure: 3, oil_quality: 92 },
     waveform: [],
     detection: { ...criticalDetection, anomaly_score: 0, risk: "LOW", fault: null },

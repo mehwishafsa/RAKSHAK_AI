@@ -120,7 +120,14 @@ export interface TelemetryFrame {
   sim_time: number;
   speed: number;
   simulated: true;
-  machine: { id: string; name: string; state: MachineState; rpm: number; injected_scenario: ScenarioId | null };
+  machine: {
+    id: string;
+    name: string;
+    state: MachineState;
+    estop_latched: boolean;
+    rpm: number;
+    injected_scenario: ScenarioId | null;
+  };
   readings: Readings;
   waveform: number[];
   detection: Detection;
