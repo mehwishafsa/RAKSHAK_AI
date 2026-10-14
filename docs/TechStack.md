@@ -17,14 +17,18 @@ Justifies every technology choice. No tool is listed because it "looks impressiv
 - **MIMII Dataset** (sound-based industrial machine anomaly) — considered for the acoustic-sensing extension.
 - **Synthetic vibration generator** — used *now*, in `notebooks/`, to validate the feature-extraction → model pipeline before real data is integrated. This is explicitly a stand-in, not a claim of real-world validation.
 
-## Frontend (planned, Phase 5)
-- **React** — chosen for component reusability and because it's the most common frontend choice in the kind of dashboards judges will compare this against, minimizing unnecessary risk on UI tooling so effort can stay on the ML/decision layer.
+## Frontend (built)
+- **React 18 + TypeScript + Vite + Tailwind CSS** — theme-tokened dark/light control-room UI.
+- **Three.js via @react-three/fiber + @react-three/drei** — the 3D digital twin, built entirely from primitive geometry (no external model or HDR downloads, so it always loads offline).
+- **Custom SVG charts** — live sensor sparklines with baseline / alarm / trip reference lines (no chart library needed at 5 Hz).
+- **Vitest + Testing Library** for component tests.
 
 ## Testing
-- **pytest** + **httpx** (FastAPI's recommended test client) for API tests.
+- **pytest** + **httpx** (FastAPI's recommended test client) for detection math, rules, ledger integrity and full incident-lifecycle API tests.
 
-## Deployment (planned)
-- **Docker** — containerizing the FastAPI service. Not yet implemented; listed in the roadmap because a working containerized service is a meaningfully higher credibility bar than a script.
+## Deployment (built)
+- **Docker** — multi-stage image: Node builds the SPA, a slim Python image runs FastAPI, which serves REST + WebSocket + the SPA on one port. `docker-compose.yml` and a Render blueprint (`render.yaml`) are included.
+- **SQLite** — machines, parts inventory, incidents and the append-only trust ledger (WAL mode, single file, volume-mounted at `/data`).
 
 ## Deliberately not used (and why)
 - **No deep learning framework (PyTorch/TensorFlow) yet.** With no large labeled real-world failure dataset currently available, a deep model would be unjustifiable complexity. This will be revisited only if/when real labeled data volume justifies it.

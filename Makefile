@@ -17,7 +17,7 @@ build:          ## build the SPA so FastAPI serves everything on :8000
 seed:
 	.venv/bin/python -m backend.rakshak.seed
 
-reseed:         ## wipe the DB (ledger, incidents, stock) and reseed — do this before a live demo
+reseed:         ## (server stopped) wipe the DB (ledger, incidents, stock) and reseed — do this before a live demo
 	.venv/bin/python -m backend.rakshak.seed --reset
 
 docker:
