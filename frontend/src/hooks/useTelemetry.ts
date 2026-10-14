@@ -64,7 +64,18 @@ export function useTelemetry() {
     return () => {
       closed = true;
       window.clearTimeout(timer);
-      ws?.close();
+      // Closing a socket mid-handshake aborts it (browser warning + dev-proxy ECONNRESET),
+      // which React StrictMode's mount→unmount→mount in dev does on every load.
+      // Let it finish opening, then close it cleanly.
+      const sock = ws;
+      if (sock && sock.readyState === WebSocket.CONNECTING) {
+        sock.onopen = () => sock.close();
+        sock.onmessage = null;
+        sock.onclose = null;
+        sock.onerror = null;
+      } else {
+        sock?.close();
+      }
     };
   }, []);
 
