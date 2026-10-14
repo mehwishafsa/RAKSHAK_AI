@@ -6,3 +6,10 @@ node_modules/
 .env
 *.egg-info/
 .DS_Store
+.venv/
+data/
+frontend/dist/
+coverage/
+*.db
+*.db-wal
+*.db-shm

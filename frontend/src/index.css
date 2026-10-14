@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme tokens (RGB triplets so Tailwind can apply alpha). Dark is primary. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: 8 12 17;
+  --surface: 14 20 28;
+  --raised: 21 29 40;
+  --line: 36 48 63;
+  --ink: 231 237 243;
+  --muted: 150 164 182;
+  --faint: 98 114 134;
+  --accent: 45 212 191;
+  --info: 96 165 250;
+  --good: 34 197 94;
+  --warn: 250 178 25;
+  --crit: 244 86 86;
+  --twin-bg: #0a0f15;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: 238 242 246;
+  --surface: 255 255 255;
+  --raised: 245 247 250;
+  --line: 212 220 229;
+  --ink: 13 20 28;
+  --muted: 68 82 100;
+  --faint: 112 126 145;
+  --accent: 13 128 118;
+  --info: 37 99 235;
+  --good: 12 128 12;
+  --warn: 176 104 0;
+  --crit: 196 36 36;
+  --twin-bg: #e6ebf0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg font-sans text-ink antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  @apply font-mono;
+}
+
+.panel {
+  @apply rounded-xl border border-line bg-surface;
+}
+
+.panel-title {
+  @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-muted;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors
+    focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent
+    disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+.btn-ghost {
+  @apply border-line bg-raised text-ink hover:border-faint;
+}
+
+*:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--line));
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

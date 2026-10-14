@@ -1,0 +1,7 @@
+# Runtime dependencies for the Rakshak AI service (backend/app.py).
+# Supported Python: 3.10 – 3.14 (all of these ship prebuilt wheels for that range,
+# so no Rust/C toolchain is needed to install).
+fastapi==0.142.1
+starlette==1.6.0
+pydantic==2.13.5
+uvicorn[standard]==0.53.0

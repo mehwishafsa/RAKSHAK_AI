@@ -1,82 +1,206 @@
 """
-backend/app.py
+Rakshak AI — FastAPI service.
 
-Rakshak AI prediction API (prototype stage).
+  WS   /ws/telemetry                    live telemetry + detection frames (5 Hz)
+  GET  /api/state                       machine, baseline, speeds, latest frame
+  POST /api/sim/scenario                inject a simulated fault  {scenario}
+  POST /api/sim/reset                   reset simulation to healthy
+  POST /api/sim/speed                   set simulation speed      {speed}
+  POST /api/sim/estop                   emergency stop (latches)  {actor}
+  POST /api/sim/release                 release a latched e-stop  {actor}
+  GET  /api/incidents                   recent incidents
+  GET  /api/incidents/{id}              one incident
+  POST /api/incidents/{id}/approve      human approval            {approver, note}
+  POST /api/incidents/{id}/reject       human rejection           {approver, reason}
+  GET  /api/ledger                      trust ledger (newest first)
+  GET  /api/ledger/verify               recompute the hash chain
+  GET  /api/inventory                   parts inventory
+  GET  /health                          liveness
+  POST /predict                         legacy IsolationForest endpoint (see legacy_predict.py)
 
-Exposes:
-  GET  /health    - basic liveness check
-  POST /predict    - takes extracted vibration features, returns the baseline
-                     model's anomaly score.
+In production the same process serves the built React app from frontend/dist.
 
-NOTE on scope (read this before assuming more exists than does):
-  - This endpoint expects pre-extracted features (rms, kurtosis, crest_factor,
-    high_band_energy), not raw signal. Feature extraction matching this API
-    lives in models/train_baseline.py and notebooks/01_synthetic_vibration_eda.ipynb.
-  - This endpoint does NOT yet return a SHAP explanation or a Trust Index.
-    Both are designed (see docs/Architecture.md) but not implemented.
-
-Run:
-    uvicorn backend.app:app --reload --port 8000
-Then visit:
-    http://127.0.0.1:8000/docs
+Run (dev):  uvicorn backend.app:app --reload --port 8000
 """
 
-import os
-import joblib
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from __future__ import annotations
 
-app = FastAPI(
-    title="Rakshak AI - Prediction API",
-    description="Prototype anomaly-scoring API for Rakshak AI. See docs/Architecture.md for full system design.",
-    version="0.1.0",
-)
+import asyncio
+import contextlib
+from contextlib import asynccontextmanager
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "baseline_isolation_forest.joblib")
-_model_bundle = None  # lazy-loaded
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
+from .legacy_predict import router as legacy_router
+from .rakshak import schemas
+from .rakshak.config import Settings, get_settings
+from .rakshak.db import Database
+from .rakshak.engine import ControlError, Engine, NotFound
+from .rakshak.ledger import Ledger
+from .rakshak.seed import seed
 
-def get_model_bundle():
-    global _model_bundle
-    if _model_bundle is None:
-        if not os.path.exists(MODEL_PATH):
-            raise HTTPException(
-                status_code=503,
-                detail="Model artifact not found. Run `python models/train_baseline.py` first.",
-            )
-        _model_bundle = joblib.load(MODEL_PATH)
-    return _model_bundle
+VERSION = "0.2.0"
 
 
-class VibrationFeatures(BaseModel):
-    rms: float = Field(..., description="Root mean square of the vibration signal window")
-    kurtosis: float = Field(..., description="Kurtosis of the signal window (impulsiveness indicator)")
-    crest_factor: float = Field(..., description="Peak amplitude / RMS ratio")
-    high_band_energy: float = Field(..., description="FFT energy above 200Hz (defect-impact band)")
+def create_app(settings: Settings | None = None, run_loop: bool = True) -> FastAPI:
+    settings = settings or get_settings()
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        db = Database(settings.db_path)
+        seed(db)
+        engine = Engine(db, seed=settings.sim_seed, tick_seconds=settings.tick_seconds)
+        engine.step()  # never serve an empty first frame
+        app.state.db = db
+        app.state.engine = engine
+        task = asyncio.create_task(engine.run()) if run_loop else None
+        try:
+            yield
+        finally:
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            db.close()
 
-class PredictionResponse(BaseModel):
-    anomaly_score: float = Field(..., description="Higher = more anomalous. Not yet calibrated to a 0-1 trust scale.")
-    is_anomaly: bool
-    note: str = "Raw model output only. SHAP explanation and Trust Index are not yet implemented (see docs/Architecture.md)."
-
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": "rakshak-ai-prediction-api", "version": "0.1.0"}
-
-
-@app.post("/predict", response_model=PredictionResponse)
-def predict(features: VibrationFeatures):
-    bundle = get_model_bundle()
-    model = bundle["model"]
-    feature_cols = bundle["feature_cols"]
-
-    row = [[getattr(features, col) for col in feature_cols]]
-    raw_prediction = model.predict(row)[0]  # -1 = anomaly, 1 = normal
-    score = float(-model.score_samples(row)[0])  # higher = more anomalous
-
-    return PredictionResponse(
-        anomaly_score=score,
-        is_anomaly=(raw_prediction == -1),
+    app = FastAPI(
+        title="Rakshak AI",
+        description="Explainable predictive maintenance + trusted action. Simulation-driven proof of concept.",
+        version=VERSION,
+        lifespan=lifespan,
     )
+    app.add_middleware(
+        CORSMiddleware, allow_origins=list(settings.cors_origins), allow_methods=["*"], allow_headers=["*"]
+    )
+
+    def engine() -> Engine:
+        return app.state.engine
+
+    def guard(fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ControlError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except NotFound as exc:
+            raise HTTPException(status_code=404, detail=f"not found: {exc}")
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok", "service": "rakshak-ai", "version": VERSION}
+
+    @app.get("/api/state")
+    def state():
+        return engine().state_summary()
+
+    @app.post("/api/sim/scenario", response_model=schemas.OkResponse)
+    def inject(req: schemas.ScenarioRequest):
+        guard(engine().inject, req.scenario)
+        return schemas.OkResponse(detail=f"{req.scenario} injected")
+
+    @app.post("/api/sim/reset", response_model=schemas.OkResponse)
+    def reset():
+        engine().reset()
+        return schemas.OkResponse(detail="reset to healthy")
+
+    @app.post("/api/sim/speed", response_model=schemas.OkResponse)
+    def speed(req: schemas.SpeedRequest):
+        guard(engine().set_speed, req.speed)
+        return schemas.OkResponse(detail=f"speed {req.speed}x")
+
+    @app.post("/api/sim/estop", response_model=schemas.OkResponse)
+    def estop(req: schemas.ActorRequest):
+        engine().emergency_stop(req.actor)
+        return schemas.OkResponse(detail="emergency stop")
+
+    @app.post("/api/sim/release", response_model=schemas.OkResponse)
+    def release(req: schemas.ActorRequest):
+        guard(engine().release_estop, req.actor)
+        return schemas.OkResponse(detail="emergency stop released")
+
+    @app.get("/api/incidents", response_model=list[schemas.Incident])
+    def incidents(limit: int = 20):
+        return engine().list_incidents(min(max(limit, 1), 200))
+
+    @app.get("/api/incidents/{incident_id}", response_model=schemas.Incident)
+    def incident(incident_id: str):
+        return guard(engine().get_incident, incident_id)
+
+    @app.post("/api/incidents/{incident_id}/approve", response_model=schemas.Incident)
+    def approve(incident_id: str, req: schemas.ApproveRequest):
+        return guard(engine().approve, incident_id, req.approver, req.note)
+
+    @app.post("/api/incidents/{incident_id}/reject", response_model=schemas.Incident)
+    def reject(incident_id: str, req: schemas.RejectRequest):
+        return guard(engine().reject, incident_id, req.approver, req.reason)
+
+    @app.get("/api/ledger", response_model=list[schemas.LedgerEntry])
+    def ledger(limit: int = 200, incident_id: str | None = None):
+        return Ledger(app.state.db).list(min(max(limit, 1), 1000), incident_id)
+
+    @app.get("/api/ledger/verify", response_model=schemas.LedgerVerification)
+    def verify():
+        return Ledger(app.state.db).verify()
+
+    @app.get("/api/inventory", response_model=list[schemas.Part])
+    def inventory():
+        return app.state.db.query("SELECT * FROM parts ORDER BY sku")
+
+    @app.websocket("/ws/telemetry")
+    async def telemetry(ws: WebSocket):
+        await ws.accept()
+        eng = engine()
+        q = eng.subscribe()
+
+        async def drain_client() -> None:
+            # Clients send a small heartbeat; reading it also notices disconnects promptly.
+            # (On hosts like Render's free tier, only *inbound* traffic counts as activity.)
+            while True:
+                await ws.receive_text()
+
+        reader = asyncio.create_task(drain_client())
+        try:
+            if eng.last_message:
+                await ws.send_json(eng.last_message)
+            while not reader.done():
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                await ws.send_json(msg)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
+                await reader
+            eng.unsubscribe(q)
+
+    app.include_router(legacy_router)
+
+    # ---- single-service deploy: serve the built SPA ------------------------
+    dist = settings.frontend_dist
+    if (dist / "index.html").exists():
+        if (dist / "assets").is_dir():
+            app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+        @app.get("/{path:path}", include_in_schema=False)
+        def spa(path: str):
+            if path.startswith(("api/", "ws/")):
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+            candidate = (dist / path).resolve()
+            if path and candidate.is_file() and dist.resolve() in candidate.parents:
+                return FileResponse(candidate)
+            return FileResponse(dist / "index.html")
+    else:
+
+        @app.get("/", include_in_schema=False)
+        def root():
+            return {"service": "rakshak-ai", "detail": "Frontend not built. Run `npm run build` in frontend/ or use the Vite dev server."}
+
+    return app
+
+
+app = create_app()

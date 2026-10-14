@@ -1,0 +1,15 @@
+services:
+  rakshak:
+    build: .
+    image: rakshak-ai:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - rakshak-data:/data   # trust ledger persists across container restarts
+    restart: unless-stopped
+
+volumes:
+  rakshak-data:

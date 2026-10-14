@@ -1,5 +1,7 @@
 # Future Roadmap
 
+> **Status update (POC round):** an end-to-end slice of Phases 4–6 now exists as a simulation-driven proof of concept — live 3D digital twin, rule-based detection and explanation, rule-template action engine with inventory check, human approval gate and hash-chained trust ledger (see the main README). It deliberately uses documented rules rather than a trained model; Phases 2–3 (real data, trained model, SHAP) and the Trust Index remain open.
+
 ## Purpose of this document
 A phased, realistic build plan. Each phase has a concrete exit criterion — not a vague aspiration — so progress can be verified.
 
