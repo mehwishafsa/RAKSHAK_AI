@@ -27,7 +27,7 @@ const LABEL_OFFSET: Record<ComponentId, [number, number, number]> = {
   motor: [-0.2, 1.0, 0],
   gearbox: [0, 1.05, -0.3],
   bearing_3: [0.15, 0.75, 0.2],
-  lube_system: [0.1, 1.05, 0.35],
+  lube_system: [0.45, -0.3, 0.55],
 };
 
 export const ANCHORS: Record<ComponentId, [number, number, number]> = {

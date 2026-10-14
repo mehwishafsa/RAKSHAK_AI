@@ -1,0 +1,16 @@
+# Render blueprint: one Docker web service serving API + WebSocket + SPA on one port.
+# Note: without a persistent disk, Render's filesystem is ephemeral, so the SQLite
+# ledger survives page refreshes and process restarts but resets on redeploy.
+services:
+  - type: web
+    name: rakshak-ai
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: RAKSHAK_DB_PATH
+        value: /data/rakshak.db
+    disk:
+      name: rakshak-data
+      mountPath: /data
+      sizeGB: 1

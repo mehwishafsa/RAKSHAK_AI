@@ -108,8 +108,8 @@ export default function App() {
       <main className="mx-auto grid w-full max-w-[1600px] flex-1 grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-12">
         {/* Hero: 3D digital twin */}
         <section
-          className="panel relative h-[clamp(420px,60vh,660px)] overflow-hidden lg:col-span-8 lg:h-auto"
-          style={{ minHeight: "clamp(420px, 60vh, 660px)", background: "var(--twin-bg)" }}
+          className="panel relative h-[clamp(420px,62vh,640px)] overflow-hidden lg:col-span-8 lg:h-[clamp(440px,calc(100vh-150px),760px)]"
+          style={{ background: "var(--twin-bg)" }}
           aria-label="Digital twin"
         >
           <ErrorBoundary
