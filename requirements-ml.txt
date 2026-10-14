@@ -1,0 +1,5 @@
+# Optional: model training (models/train_baseline.py), EDA notebook and the legacy /predict endpoint.
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.5
+joblib>=1.4

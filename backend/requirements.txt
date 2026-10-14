@@ -1,0 +1,4 @@
+# Runtime dependencies for the Rakshak AI service (backend/app.py).
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.4
